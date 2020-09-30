@@ -13,3 +13,5 @@ pub use sokol_app_msvc::*;
 pub mod sokol_app_gnu;
 #[cfg(target_env = "gnu")]
 pub use sokol_app_gnu::*;
+
+pub mod custom_event;

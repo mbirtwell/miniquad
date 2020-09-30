@@ -34,6 +34,7 @@ pub use event::*;
 pub use graphics::*;
 
 use std::ffi::CString;
+use std::marker::PhantomData;
 
 #[deprecated(
     since = "0.3",
@@ -125,17 +126,41 @@ impl Context {
     }
 }
 
-pub enum UserData {
-    Owning((Box<dyn EventHandler>, Context)),
-    Free(Box<dyn EventHandlerFree>),
+pub struct CustomEventPostBox<CustomEvent> {
+    _type: PhantomData<*const CustomEvent>,
 }
 
-impl UserData {
-    pub fn owning(event_handler: impl EventHandler + 'static, ctx: Context) -> UserData {
+unsafe impl<CustomEvent> Send for CustomEventPostBox<CustomEvent> {}
+
+impl<CustomEvent> Clone for CustomEventPostBox<CustomEvent> {
+    fn clone(&self) -> Self {
+        Self {
+            _type: PhantomData {}
+        }
+    }
+}
+
+impl<CustomEvent> CustomEventPostBox<CustomEvent>
+where
+    CustomEvent: Send,
+{
+    pub fn post(&self, event: impl Into<CustomEvent>) {
+        let package = Box::new(event.into());
+        unsafe { sapp::custom_event::post_custom_event(Box::into_raw(package) as *mut _) }
+    }
+}
+
+pub enum UserData<CustomEvent = ()> {
+    Owning((Box<dyn EventHandler<CustomEvent>>, Context)),
+    Free(Box<dyn EventHandlerFree<CustomEvent>>),
+}
+
+impl<CustomEvent> UserData<CustomEvent> {
+    pub fn owning(event_handler: impl EventHandler<CustomEvent> + 'static, ctx: Context) -> Self {
         UserData::Owning((Box::new(event_handler), ctx))
     }
 
-    pub fn free(event_handler: impl EventHandlerFree + 'static) -> UserData {
+    pub fn free(event_handler: impl EventHandlerFree<CustomEvent> + 'static) -> Self {
         UserData::Free(Box::new(event_handler))
     }
 }
@@ -154,14 +179,19 @@ macro_rules! event_call {
     }};
 }
 
-enum UserDataState {
-    Uninitialized(Box<dyn 'static + FnOnce(Context) -> UserData>),
-    Intialized(UserData),
+enum UserDataState<CustomEvent> {
+    Uninitialized(
+        Box<
+            dyn 'static + FnOnce(Context, CustomEventPostBox<CustomEvent>) -> UserData<CustomEvent>,
+        >,
+    ),
+    Intialized(UserData<CustomEvent>),
     Empty,
 }
 
-extern "C" fn init(user_data: *mut ::std::os::raw::c_void) {
-    let data: &mut UserDataState = unsafe { &mut *(user_data as *mut UserDataState) };
+extern "C" fn init<CustomEvent>(user_data: *mut ::std::os::raw::c_void) {
+    let data: &mut UserDataState<CustomEvent> =
+        unsafe { &mut *(user_data as *mut UserDataState<CustomEvent>) };
     let empty = UserDataState::Empty;
 
     let f = std::mem::replace(data, empty);
@@ -171,13 +201,17 @@ extern "C" fn init(user_data: *mut ::std::os::raw::c_void) {
         panic!();
     };
     let context = graphics::Context::new();
+    let post_box = CustomEventPostBox {
+        _type: PhantomData {},
+    };
 
-    let user_data = f(context);
+    let user_data = f(context, post_box);
     *data = UserDataState::Intialized(user_data);
 }
 
-extern "C" fn frame(user_data: *mut ::std::os::raw::c_void) {
-    let data: &mut UserDataState = unsafe { &mut *(user_data as *mut UserDataState) };
+extern "C" fn frame<CustomEvent>(user_data: *mut ::std::os::raw::c_void) {
+    let data: &mut UserDataState<CustomEvent> =
+        unsafe { &mut *(user_data as *mut UserDataState<CustomEvent>) };
 
     let data = if let UserDataState::Intialized(ref mut data) = data {
         data
@@ -189,8 +223,12 @@ extern "C" fn frame(user_data: *mut ::std::os::raw::c_void) {
     event_call!(data, draw);
 }
 
-extern "C" fn event(event: *const sapp::sapp_event, user_data: *mut ::std::os::raw::c_void) {
-    let data: &mut UserDataState = unsafe { &mut *(user_data as *mut UserDataState) };
+extern "C" fn event<CustomEvent>(
+    event: *const sapp::sapp_event,
+    user_data: *mut ::std::os::raw::c_void,
+) {
+    let data: &mut UserDataState<CustomEvent> =
+        unsafe { &mut *(user_data as *mut UserDataState<CustomEvent>) };
     let event = unsafe { &*event };
 
     let data = if let UserDataState::Intialized(ref mut data) = data {
@@ -275,6 +313,11 @@ extern "C" fn event(event: *const sapp::sapp_event, user_data: *mut ::std::os::r
         sapp::sapp_event_type_SAPP_EVENTTYPE_RAW_DEVICE => {
             event_call!(data, raw_mouse_motion, event.mouse_dx, event.mouse_dy);
         }
+        sapp::sapp_event_type_SAPP_EVENTTYPE_CUSTOM => {
+            event_call!(data, custom_event, unsafe {
+                Box::from_raw(event.custom_data as *mut _)
+            });
+        }
         _ => {}
     }
 }
@@ -314,7 +357,14 @@ extern "C" fn event(event: *const sapp::sapp_event, user_data: *mut ::std::os::r
 /// ```
 pub fn start<F>(conf: conf::Conf, f: F)
 where
-    F: 'static + FnOnce(Context) -> UserData,
+    F: 'static + FnOnce(Context) -> UserData<()>,
+{
+    start_with_custom_events(conf, move |ctx, _| f(ctx))
+}
+
+pub fn start_with_custom_events<CustomEvent, F>(conf: conf::Conf, f: F)
+where
+    F: 'static + FnOnce(Context, CustomEventPostBox<CustomEvent>) -> UserData<CustomEvent>,
 {
     let mut desc: sapp::sapp_desc = unsafe { std::mem::zeroed() };
 
@@ -329,9 +379,9 @@ where
     desc.high_dpi = conf.high_dpi as _;
     desc.window_title = title.as_ptr();
     desc.user_data = &mut *user_data as *mut _ as *mut _;
-    desc.init_userdata_cb = Some(init);
-    desc.frame_userdata_cb = Some(frame);
-    desc.event_userdata_cb = Some(event);
+    desc.init_userdata_cb = Some(init::<CustomEvent>);
+    desc.frame_userdata_cb = Some(frame::<CustomEvent>);
+    desc.event_userdata_cb = Some(event::<CustomEvent>);
 
     std::mem::forget(user_data);
 

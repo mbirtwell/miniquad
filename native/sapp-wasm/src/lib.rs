@@ -3,6 +3,7 @@
 pub mod fs;
 mod gl;
 mod rand;
+pub mod custom_event;
 
 pub use gl::*;
 pub use rand::*;
@@ -70,7 +71,8 @@ pub const sapp_event_type_SAPP_EVENTTYPE_RESUMED: sapp_event_type = 18;
 pub const sapp_event_type_SAPP_EVENTTYPE_UPDATE_CURSOR: sapp_event_type = 19;
 pub const sapp_event_type_SAPP_EVENTTYPE_QUIT_REQUESTED: sapp_event_type = 20;
 pub const sapp_event_type_SAPP_EVENTTYPE_RAW_DEVICE: sapp_event_type = 21;
-pub const sapp_event_type__SAPP_EVENTTYPE_NUM: sapp_event_type = 22;
+pub const sapp_event_type_SAPP_EVENTTYPE_CUSTOM: sapp_event_type = 22;
+pub const sapp_event_type__SAPP_EVENTTYPE_NUM: sapp_event_type = 23;
 pub const sapp_event_type__SAPP_EVENTTYPE_FORCE_U32: sapp_event_type = 2147483647;
 
 pub const sapp_keycode_SAPP_KEYCODE_INVALID: sapp_keycode = 0;
@@ -227,6 +229,7 @@ pub struct sapp_event {
     pub window_height: ::std::os::raw::c_int,
     pub framebuffer_width: ::std::os::raw::c_int,
     pub framebuffer_height: ::std::os::raw::c_int,
+    pub custom_data: *mut ::std::os::raw::c_void,
 }
 
 #[repr(C)]

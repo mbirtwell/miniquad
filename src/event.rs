@@ -332,7 +332,7 @@ impl From<u32> for TouchPhase {
 }
 
 /// A trait defining event callbacks.
-pub trait EventHandler {
+pub trait EventHandler<CustomEvent = ()> {
     fn update(&mut self, _ctx: &mut Context);
     fn draw(&mut self, _ctx: &mut Context);
     fn resize_event(&mut self, _ctx: &mut Context, _width: f32, _height: f32) {}
@@ -401,12 +401,14 @@ pub trait EventHandler {
     /// ctx.cancel_quit() to cancel the quit.
     /// If the event is ignored, the application will quit as usual.
     fn quit_requested_event(&mut self, _ctx: &mut Context) {}
+
+    fn custom_event(&mut self, _ctx: &mut Context, _event_data: Box<CustomEvent>) {}
 }
 
 /// A trait defining event callbacks.
 /// Used for miniquad's setup with user-owned Context.
 /// The only difference from EventHandler - will not receive "&mut Context"
-pub trait EventHandlerFree {
+pub trait EventHandlerFree<CustomEvent = ()> {
     fn update(&mut self);
     fn draw(&mut self);
     fn resize_event(&mut self, _width: f32, _height: f32) {}
@@ -444,4 +446,6 @@ pub trait EventHandlerFree {
     /// ctx.cancel_quit() to cancel the quit.
     /// If the event is ignored, the application will quit as usual.
     fn quit_requested_event(&mut self) {}
+
+    fn custom_event(&mut self, _event_data: Box<CustomEvent>) {}
 }

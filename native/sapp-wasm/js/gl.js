@@ -1166,6 +1166,13 @@ var importObject = {
             } else {
                 document.exitPointerLock();
             }
+        },
+        post_custom_event: function (event_data) {
+            if(this instanceof Window) {
+                custom_event(event_data);
+            } else {
+                throw "Custom event posted from web worker. TODO could we support this";
+            }
         }
     }
 };

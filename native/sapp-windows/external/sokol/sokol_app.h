@@ -527,6 +527,7 @@ typedef enum sapp_event_type {
     SAPP_EVENTTYPE_RESUMED,
     SAPP_EVENTTYPE_UPDATE_CURSOR,
     SAPP_EVENTTYPE_QUIT_REQUESTED,
+    SAPP_EVENTTYPE_CUSTOM,
     _SAPP_EVENTTYPE_NUM,
     _SAPP_EVENTTYPE_FORCE_U32 = 0x7FFFFFFF
 } sapp_event_type;
@@ -697,6 +698,7 @@ typedef struct sapp_event {
     int window_height;
     int framebuffer_width;
     int framebuffer_height;
+    void* custom_data;
 } sapp_event;
 
 typedef struct sapp_desc {
@@ -1060,6 +1062,17 @@ _SOKOL_PRIVATE void _sapp_init_event(sapp_event_type type) {
 _SOKOL_PRIVATE bool _sapp_events_enabled(void) {
     /* only send events when an event callback is set, and the init function was called */
     return (_sapp.desc.event_cb || _sapp.desc.event_userdata_cb) && _sapp.init_called;
+}
+
+_SOKOL_PRIVATE void _sapp_custom_event(void* event_data) {
+    if (_sapp_events_enabled()) {
+        _sapp_init_event(SAPP_EVENTTYPE_CUSTOM);
+        // The rust is going to turn _sapp.event.custom_data in to a Box
+        // so we ought to be pretty sure that we only pass this pointer in once
+        // I think so.
+        _sapp.event.custom_data = event_data;
+        _sapp_call_event(&_sapp.event);
+    }
 }
 
 _SOKOL_PRIVATE sapp_keycode _sapp_translate_key(int scan_code) {
@@ -3124,6 +3137,7 @@ typedef int  GLint;
 #define GL_MAX_VERTEX_ATTRIBS 0x8869
 #define GL_CLAMP_TO_BORDER 0x812D
 #define GL_TEXTURE_BORDER_COLOR 0x1004
+#define GL_UNPACK_ALIGNMENT 0x0cf5
 
 #define GL_TEXTURE_2D 0x0DE1
 
@@ -4106,6 +4120,8 @@ _SOKOL_PRIVATE void _sapp_wgl_swap_buffers(void) {
 }
 #endif
 
+#define WM_CUSTOM_EVENT (WM_USER + 1)
+
 _SOKOL_PRIVATE bool _sapp_win32_utf8_to_wide(const char* src, wchar_t* dst, int dst_num_bytes) {
     SOKOL_ASSERT(src && dst && (dst_num_bytes > 1));
     memset(dst, 0, dst_num_bytes);
@@ -4461,6 +4477,9 @@ _SOKOL_PRIVATE LRESULT CALLBACK _sapp_win32_wndproc(HWND hWnd, UINT uMsg, WPARAM
             case WM_SYSKEYUP:
                 _sapp_win32_key_event(SAPP_EVENTTYPE_KEY_UP, (int)(HIWORD(lParam)&0x1FF), false);
                 break;
+            case WM_CUSTOM_EVENT:
+                _sapp_custom_event((void*)wParam);
+                break;
             default:
                 break;
         }
@@ -4643,6 +4662,27 @@ _SOKOL_PRIVATE void _sapp_run(const sapp_desc* desc) {
         _sapp_wgl_shutdown();
     #endif
     _sapp_win32_destroy_window();
+}
+
+void post_custom_event(void* event_data) {
+    // Both WPARAM and LPARAM are apprarently pointer sized.
+    // WPARAM is UINT_PTR and LPARAM is LONG_PTR. So they're the same except
+    // LPARAM is signed.
+    if(!PostMessage(_sapp_win32_hwnd, WM_CUSTOM_EVENT, (WPARAM)event_data, (LPARAM)0)) {
+        char* lpMsgBuf;
+        DWORD dw = GetLastError();
+
+        FormatMessage(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER |
+            FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL,
+            dw,
+            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            (LPTSTR) &lpMsgBuf,
+            0, NULL );
+        _sapp_fail(lpMsgBuf);
+    }
 }
 
 static char** _sapp_win32_command_line_to_utf8_argv(LPWSTR w_command_line, int* o_argc) {
