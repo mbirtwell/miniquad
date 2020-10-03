@@ -527,6 +527,7 @@ typedef enum sapp_event_type {
     SAPP_EVENTTYPE_RESUMED,
     SAPP_EVENTTYPE_UPDATE_CURSOR,
     SAPP_EVENTTYPE_QUIT_REQUESTED,
+    SAPP_EVENTTYPE_RAW_DEVICE,
     SAPP_EVENTTYPE_CUSTOM,
     _SAPP_EVENTTYPE_NUM,
     _SAPP_EVENTTYPE_FORCE_U32 = 0x7FFFFFFF
@@ -1065,6 +1066,7 @@ _SOKOL_PRIVATE bool _sapp_events_enabled(void) {
 }
 
 _SOKOL_PRIVATE void _sapp_custom_event(void* event_data) {
+    fprintf(stderr, "In _sapp_custom_event enabled: %s\n", _sapp_events_enabled() ? "true" : "false");
     if (_sapp_events_enabled()) {
         _sapp_init_event(SAPP_EVENTTYPE_CUSTOM);
         // The rust is going to turn _sapp.event.custom_data in to a Box
@@ -4478,6 +4480,7 @@ _SOKOL_PRIVATE LRESULT CALLBACK _sapp_win32_wndproc(HWND hWnd, UINT uMsg, WPARAM
                 _sapp_win32_key_event(SAPP_EVENTTYPE_KEY_UP, (int)(HIWORD(lParam)&0x1FF), false);
                 break;
             case WM_CUSTOM_EVENT:
+                fprintf(stderr, "Got custom event");
                 _sapp_custom_event((void*)wParam);
                 break;
             default:
@@ -4514,6 +4517,7 @@ _SOKOL_PRIVATE void _sapp_win32_create_window(void) {
     AdjustWindowRectEx(&rect, win_style, FALSE, win_ex_style);
     const int win_width = rect.right - rect.left;
     const int win_height = rect.bottom - rect.top;
+    fprintf(stderr, "Setting in create window\n");
     _sapp_win32_in_create_window = true;
     _sapp_win32_hwnd = CreateWindowExW(
         win_ex_style,               /* dwExStyle */
@@ -4530,6 +4534,7 @@ _SOKOL_PRIVATE void _sapp_win32_create_window(void) {
         NULL);                      /* lParam */
     ShowWindow(_sapp_win32_hwnd, SW_SHOW);
     _sapp_win32_in_create_window = false;
+    fprintf(stderr, "Cleared in create window\n");
     _sapp_win32_dc = GetDC(_sapp_win32_hwnd);
     SOKOL_ASSERT(_sapp_win32_dc);
     _sapp_win32_update_dimensions();
