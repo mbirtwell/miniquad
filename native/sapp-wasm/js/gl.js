@@ -1169,7 +1169,7 @@ var importObject = {
         },
         post_custom_event: function (event_data) {
             if(this instanceof Window) {
-                custom_event(event_data);
+                wasm_exports.custom_event(event_data);
             } else {
                 throw "Custom event posted from web worker. TODO could we support this";
             }
