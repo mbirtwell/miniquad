@@ -318,7 +318,9 @@ extern "C" fn event<CustomEvent>(
                 Box::from_raw(event.custom_data as *mut _)
             });
         }
-        _ => {}
+        _ => {
+            println!("Got unhandled event {}", event.type_);
+        }
     }
 }
 
