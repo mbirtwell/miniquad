@@ -6,6 +6,10 @@
 //
 // TODO: split to gl.js and loader.js
 
+"use strict";
+
+const version = "0.1.20";
+
 const canvas = document.querySelector("#glcanvas");
 const gl = canvas.getContext("webgl");
 if (gl === null) {
@@ -15,6 +19,7 @@ if (gl === null) {
 var clipboard = null;
 
 var plugins = [];
+var wasm_memory;
 
 canvas.focus();
 
@@ -54,8 +59,20 @@ function acquireInstancedArraysExtension(ctx) {
     }
 }
 
+function acquireDisjointTimerQueryExtension(ctx) {
+    var ext = ctx.getExtension('EXT_disjoint_timer_query');
+    if (ext) {
+        ctx['createQuery'] = function () { return ext['createQueryEXT'](); };
+        ctx['beginQuery'] = function (target, query) { return ext['beginQueryEXT'](target, query); };
+        ctx['endQuery'] = function (target) { return ext['endQueryEXT'](target); };
+        ctx['deleteQuery'] = function (query) { ext['deleteQueryEXT'](query); };
+        ctx['getQueryObject'] = function (query, pname) { return ext['getQueryObjectEXT'](query, pname); };
+    }
+}
+
 acquireVertexArrayObjectExtension(gl);
 acquireInstancedArraysExtension(gl);
+acquireDisjointTimerQueryExtension(gl);
 
 // https://developer.mozilla.org/en-US/docs/Web/API/WEBGL_depth_texture
 if (gl.getExtension('WEBGL_depth_texture') == null) {
@@ -161,6 +178,7 @@ var GL = {
     uniforms: [],
     shaders: [],
     vaos: [],
+    timerQueries: [],
     contexts: {},
     programInfos: {},
 
@@ -236,7 +254,7 @@ var GL = {
     }
 }
 
-_glGenObject = function (n, buffers, createFunction, objectTable, functionName) {
+function _glGenObject(n, buffers, createFunction, objectTable, functionName) {
     for (var i = 0; i < n; i++) {
         var buffer = gl[createFunction]();
         var id = buffer && GL.getNewId(objectTable);
@@ -253,7 +271,7 @@ _glGenObject = function (n, buffers, createFunction, objectTable, functionName) 
     }
 }
 
-_webglGet = function (name_, p, type) {
+function _webglGet(name_, p, type) {
     // Guard against user passing a null pointer.
     // Note that GLES2 spec does not say anything about how passing a null pointer should be treated.
     // Testing on desktop core GL 3, the application crashes on glGetIntegerv to a null pointer, but
@@ -381,7 +399,7 @@ function resize(canvas, on_resize) {
     }
 }
 
-animation = function () {
+function animation() {
     wasm_exports.frame();
     window.requestAnimationFrame(animation);
 }
@@ -396,7 +414,7 @@ const SAPP_MODIFIER_CTRL = 2;
 const SAPP_MODIFIER_ALT = 4;
 const SAPP_MODIFIER_SUPER = 8;
 
-into_sapp_mousebutton = function (btn) {
+function into_sapp_mousebutton(btn) {
     switch (btn) {
         case 0: return 0;
         case 1: return 2;
@@ -405,7 +423,7 @@ into_sapp_mousebutton = function (btn) {
     }
 }
 
-into_sapp_keycode = function (key_code) {
+function into_sapp_keycode(key_code) {
     switch (key_code) {
         case "Space": return 32;
         case "Comma": return 44;
@@ -526,7 +544,7 @@ into_sapp_keycode = function (key_code) {
     console.log("Unsupported keyboard key: ", key_code)
 }
 
-texture_size = function (internalFormat, width, height) {
+function texture_size(internalFormat, width, height) {
     if (internalFormat == gl.ALPHA) {
         return width * height;
     }
@@ -539,7 +557,7 @@ texture_size = function (internalFormat, width, height) {
     }
 }
 
-mouse_relative_position = function (clientX, clientY) {
+function mouse_relative_position(clientX, clientY) {
     var targetRect = canvas.getBoundingClientRect();
 
     var x = clientX - targetRect.left;
@@ -620,6 +638,10 @@ var importObject = {
         glTexSubImage2D: function (target, level, xoffset, yoffset, width, height, format, type, pixels) {
             gl.texSubImage2D(target, level, xoffset, yoffset, width, height, format, type,
                 pixels ? getArray(pixels, Uint8Array, texture_size(format, width, height)) : null);
+        },
+        glReadPixels: function(x, y, width, height, format, type, pixels) {
+            var pixelData = getArray(pixels, Uint8Array, texture_size(format, width, height));
+            gl.readPixels(x, y, width, height, format, type, pixelData);
         },
         glTexParameteri: function (target, pname, param) {
             gl.texParameteri(target, pname, param);
@@ -766,6 +788,12 @@ var importObject = {
         glEnable: function (cap) {
             gl.enable(cap);
         },
+        glFlush: function () {
+            gl.flush();
+        },
+        glFinish: function () {
+            gl.finish();
+        },
         glDepthFunc: function (func) {
             gl.depthFunc(func);
         },
@@ -852,6 +880,10 @@ var importObject = {
         glCullFace: function (mode) {
             gl.cullFace(mode);
         },
+        glCopyTexImage2D: function (target, level, internalformat, x, y, width, height, border) {
+            gl.copyTexImage2D(target, level, internalformat, x, y, width, height, border);
+        },
+
         glShaderSource: function (shader, count, string, length) {
             GL.validateGLObjectID(GL.shaders, shader, 'glShaderSource', 'shader');
             var source = GL.getSource(shader, count, string, length);
@@ -975,6 +1007,40 @@ var importObject = {
                 GL.textures[id] = null;
             }
         },
+		glGenQueries: function (n, ids) {
+			_glGenObject(n, ids, 'createQuery', GL.timerQueries, 'glGenQueries');
+		},
+		glDeleteQueries: function (n, ids) {
+            for (var i = 0; i < n; i++) {
+                var id = getArray(textures + i * 4, Uint32Array, 1)[0];
+                var query = GL.timerQueries[id];
+                if (!query) {
+					continue;
+				}
+                gl.deleteQuery(query);
+                query.name = 0;
+                GL.timerQueries[id] = null;
+            }
+		},
+		glBeginQuery: function (target, id) {
+			GL.validateGLObjectID(GL.timerQueries, id, 'glBeginQuery', 'id');
+			gl.beginQuery(target, GL.timerQueries[id]);
+		},
+		glEndQuery: function (target) {
+			gl.endQuery(target);
+		},
+		glGetQueryObjectiv: function (id, pname, ptr) {
+			GL.validateGLObjectID(GL.timerQueries, id, 'glGetQueryObjectiv', 'id');
+			let result = gl.getQueryObject(GL.timerQueries[id], pname);
+			getArray(ptr, Uint32Array, 1)[0] = result;
+		},
+		glGetQueryObjectui64v: function (id, pname, ptr) {
+			GL.validateGLObjectID(GL.timerQueries, id, 'glGetQueryObjectui64v', 'id');
+			let result = gl.getQueryObject(GL.timerQueries[id], pname);
+			let heap = getArray(ptr, Uint32Array, 2);
+			heap[0] = result;
+			heap[1] = (result - heap[0])/4294967296;
+		},
         init_opengl: function (ptr) {
             canvas.onmousemove = function (event) {
                 var relative_position = mouse_relative_position(event.clientX, event.clientY);
@@ -1059,28 +1125,28 @@ var importObject = {
             canvas.addEventListener("touchstart", function (event) {
                 event.preventDefault();
 
-                for (touch of event.changedTouches) {
+                for (const touch of event.changedTouches) {
                     wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_BEGAN, touch.identifier, Math.floor(touch.clientX), Math.floor(touch.clientY));
                 }
             });
             canvas.addEventListener("touchend", function (event) {
                 event.preventDefault();
 
-                for (touch of event.changedTouches) {
+                for (const touch of event.changedTouches) {
                     wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_ENDED, touch.identifier, Math.floor(touch.clientX), Math.floor(touch.clientY));
                 }
             });
             canvas.addEventListener("touchcancel", function (event) {
                 event.preventDefault();
 
-                for (touch of event.changedTouches) {
+                for (const touch of event.changedTouches) {
                     wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_CANCELED, touch.identifier, Math.floor(touch.clientX), Math.floor(touch.clientY));
                 }
             });
             canvas.addEventListener("touchmove", function (event) {
                 event.preventDefault();
 
-                for (touch of event.changedTouches) {
+                for (const touch of event.changedTouches) {
                     wasm_exports.touch(SAPP_EVENTTYPE_TOUCHES_MOVED, touch.identifier, Math.floor(touch.clientX), Math.floor(touch.clientY));
                 }
             });
@@ -1167,6 +1233,9 @@ var importObject = {
                 document.exitPointerLock();
             }
         },
+        sapp_set_cursor: function(ptr, len) {
+            canvas.style.cursor = UTF8ToString(ptr, len);
+        },
         post_custom_event: function (event_data) {
             if(this instanceof Window) {
                 wasm_exports.custom_event(event_data);
@@ -1189,6 +1258,14 @@ function register_plugins(plugins) {
     }
 }
 
+function u32_to_semver(crate_version) {
+    let major_version = (crate_version >> 24) & 0xff;
+    let minor_version = (crate_version >> 16) & 0xff;
+    let patch_version = crate_version & 0xffff;
+
+    return major_version + "." + minor_version + "." + patch_version;
+}
+
 function init_plugins(plugins) {
     if (plugins == undefined)
         return;
@@ -1197,7 +1274,25 @@ function init_plugins(plugins) {
         if (plugins[i].on_init != undefined && plugins[i].on_init != null) {
             plugins[i].on_init();
         }
-    }
+        if (plugins[i].name == undefined || plugins[i].name == null ||
+            plugins[i].version == undefined || plugins[i].version == null) {
+            console.warn("Some of the registred plugins do not have name or version");
+            console.warn("Probably old version of the plugin used");
+        } else {
+            var version_func = plugins[i].name + "_crate_version";
+
+            if (wasm_exports[version_func] == undefined) {
+                console.error("Plugin " + plugins[i].name + " miss version function: " + version_func + ". Probably invalid crate version.");
+            } else {
+                var crate_version = u32_to_semver(wasm_exports[version_func]());
+
+                if (plugins[i].version != crate_version) {
+                    console.error("Plugin " + plugins[i].name + " version mismatch" +
+                                  "js version: " + plugins[i].version + ", crate version: " + crate_version)
+                }
+            }
+        }
+     }
 }
 
 
@@ -1205,30 +1300,75 @@ function miniquad_add_plugin(plugin) {
     plugins.push(plugin);
 }
 
+// read module imports and create fake functions in import object
+// this is will allow to successfeully link wasm even with wrong version of gl.js
+// needed to workaround firefox bug with lost error on wasm linking errors
+function add_missing_functions_stabs(obj) {
+    var imports = WebAssembly.Module.imports(obj);
+
+    for (const i in imports) {
+        if (importObject["env"][imports[i].name] == undefined) {
+            console.warn("No " + imports[i].name + " function in gl.js");
+            importObject["env"][imports[i].name] = function() {
+                console.warn("Missed function: " + imports[i].name);
+            };
+        }
+    }
+}
+
 function load(wasm_path) {
     var req = fetch(wasm_path);
 
     register_plugins(plugins);
 
-    if (typeof WebAssembly.instantiateStreaming === 'function') {
-        WebAssembly.instantiateStreaming(req, importObject)
+    if (typeof WebAssembly.compileStreaming === 'function') {
+        WebAssembly.compileStreaming(req)
             .then(obj => {
-                wasm_memory = obj.instance.exports.memory;
-                wasm_exports = obj.instance.exports;
+                add_missing_functions_stabs(obj);
+                return WebAssembly.instantiate(obj, importObject);
+            })
+            .then(
+                obj => {
+                    wasm_memory = obj.exports.memory;
+                    wasm_exports = obj.exports;
 
-                init_plugins(plugins);
-                obj.instance.exports.main();
-            });
+                    var crate_version = u32_to_semver(wasm_exports.crate_version());
+                    if (version != crate_version) {
+                        console.error(
+                            "Version mismatch: gl.js version is: " + version +
+                                ", rust sapp-wasm crate version is: " + crate_version);
+                    }
+                    init_plugins(plugins);
+                    obj.exports.main();
+                })
+            .catch(err => {
+                console.error("WASM failed to load, probably incompatible gl.js version");
+                console.error(err);
+            })
     } else {
         req
             .then(function (x) { return x.arrayBuffer(); })
-            .then(function (bytes) { return WebAssembly.instantiate(bytes, importObject); })
+            .then(function (bytes) { return WebAssembly.compile(bytes); })
             .then(function (obj) {
-                wasm_memory = obj.instance.exports.memory;
-                wasm_exports = obj.instance.exports;
+                add_missing_functions_stabs(obj);
+                return WebAssembly.instantiate(obj, importObject);
+            })
+            .then(function (obj) {
+                wasm_memory = obj.exports.memory;
+                wasm_exports = obj.exports;
 
+                var crate_version = u32_to_semver(wasm_exports.crate_version());
+                if (version != crate_version) {
+                    console.error(
+                        "Version mismatch: gl.js version is: " + version +
+                            ", rust sapp-wasm crate version is: " + crate_version);
+                }
                 init_plugins(plugins);
-                obj.instance.exports.main();
+                obj.exports.main();
+            })
+            .catch(err => {
+                console.error("WASM failed to load, probably incompatible gl.js version");
+                console.error(err);
             });
     }
 }

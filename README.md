@@ -1,6 +1,7 @@
 # Miniquad
 
 [![Github Actions](https://github.com/not-fl3/miniquad/workflows/Cross-compile/badge.svg)](https://github.com/not-fl3/miniquad/actions?query=workflow%3A)
+[![Docs](https://docs.rs/miniquad/badge.svg?version=0.3.0-alpha)](https://docs.rs/miniquad/0.3.0-alpha/miniquad/index.html)
 [![Crates.io version](https://img.shields.io/crates/v/miniquad.svg)](https://crates.io/crates/miniquad)
 [![Discord chat](https://img.shields.io/discord/710177966440579103.svg?label=discord%20chat)](https://discord.gg/WfEp6ut)
 [![Matrix](https://img.shields.io/matrix/quad-general:matrix.org?label=matrix%20chat)](https://matrix.to/#/#quad-general:matrix.org)
@@ -76,6 +77,8 @@ And then use the following .html to load .wasm:
 <details><summary>index.html</summary>
 
 ```html
+<html lang="en">
+
 <head>
     <meta charset="utf-8">
     <title>TITLE</title>
@@ -158,3 +161,13 @@ cargo run --example quad --target x86_64-pc-windows-gnu
 * High end API, like Vulkan/DirectX 12. Take a look on [gfx-rs](https://github.com/gfx-rs/gfx) or [vulkano](https://github.com/vulkano-rs/vulkano) instead!
 
 * sokol-gfx api compatibility. While sokol is absolutely great as an API design foundation, just reimplementing sokol in rust is not a goal. The idea is to learn from sokol, but make a library in a rust way when it is possible.
+
+# Platinum sponsors
+
+Miniquad is supported by:
+
+<p>
+  <a href="https://embark-studios.com">
+    <img src="https://www.embark.dev/img/logo_black.png" width="201px">
+  </a>
+</p>

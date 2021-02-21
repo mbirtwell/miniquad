@@ -1,7 +1,7 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
 pub mod fs;
-mod gl;
+pub mod gl;
 mod rand;
 pub mod custom_event;
 
@@ -40,6 +40,8 @@ impl SappContext {
 }
 
 static mut SAPP_CONTEXT: Option<SappContext> = None;
+static mut sapp_cursor_icon: u32 = SAPP_CURSOR_DEFAULT;
+static mut sapp_cursor_shown: bool = true;
 
 unsafe fn sapp_context() -> &'static mut SappContext {
     SAPP_CONTEXT.as_mut().unwrap()
@@ -207,6 +209,19 @@ pub const SAPP_MODIFIER_CTRL: u32 = 1 << 1;
 pub const SAPP_MODIFIER_ALT: u32 = 1 << 2;
 pub const SAPP_MODIFIER_SUPER: u32 = 1 << 3;
 
+pub const SAPP_CURSOR_DEFAULT: u32 = 0;
+pub const SAPP_CURSOR_HELP: u32 = 1;
+pub const SAPP_CURSOR_POINTER: u32 = 2;
+pub const SAPP_CURSOR_WAIT: u32 = 3;
+pub const SAPP_CURSOR_CROSSHAIR: u32 = 4;
+pub const SAPP_CURSOR_TEXT: u32 = 5;
+pub const SAPP_CURSOR_MOVE: u32 = 6;
+pub const SAPP_CURSOR_NOTALLOWED: u32 = 7;
+pub const SAPP_CURSOR_EWRESIZE: u32 = 8;
+pub const SAPP_CURSOR_NSRESIZE: u32 = 9;
+pub const SAPP_CURSOR_NESWRESIZE: u32 = 10;
+pub const SAPP_CURSOR_NWSERESIZE: u32 = 11;
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct sapp_event {
@@ -311,7 +326,6 @@ pub unsafe fn sapp_height() -> ::std::os::raw::c_int {
     canvas_height()
 }
 
-#[no_mangle]
 extern "C" {
     pub fn init_opengl();
     pub fn canvas_width() -> i32;
@@ -330,10 +344,50 @@ extern "C" {
     /// Notice that this function will works only from "engaging" event callbacks - from
     /// "mouse_down"/"key_down" event handler functions.
     pub fn sapp_set_cursor_grab(grab: bool);
+
+    pub fn sapp_set_cursor(cursor: *const u8, len: usize);
+
+    pub fn sapp_is_elapsed_timer_supported() -> bool;
 }
 
-/// Do nothing on wasm - cursor will be hidden by "sapp_set_cursor_grab" anyway.
-pub unsafe fn sapp_show_mouse(_shown: bool) {}
+pub unsafe fn sapp_show_mouse(shown: bool) {
+    if shown != sapp_cursor_shown {
+        sapp_cursor_shown = shown;
+        update_cursor();
+    }
+}
+
+pub unsafe fn sapp_set_mouse_cursor(cursor_icon: u32) {
+    if cursor_icon != sapp_cursor_icon {
+        sapp_cursor_icon = cursor_icon;
+        if sapp_cursor_shown {
+            update_cursor();
+        }
+    }
+}
+
+pub unsafe fn update_cursor() {
+    let css_name = if !sapp_cursor_shown {
+        "none"
+    } else {
+        match sapp_cursor_icon {
+            SAPP_CURSOR_DEFAULT => "default",
+            SAPP_CURSOR_HELP => "help",
+            SAPP_CURSOR_POINTER => "pointer",
+            SAPP_CURSOR_WAIT => "wait",
+            SAPP_CURSOR_CROSSHAIR => "crosshair",
+            SAPP_CURSOR_TEXT => "text",
+            SAPP_CURSOR_MOVE => "move",
+            SAPP_CURSOR_NOTALLOWED => "not-allowed",
+            SAPP_CURSOR_EWRESIZE => "ew-resize",
+            SAPP_CURSOR_NSRESIZE => "ns-resize",
+            SAPP_CURSOR_NESWRESIZE => "nesw-resize",
+            SAPP_CURSOR_NWSERESIZE => "nwse-resize",
+            _ => return,
+        }
+    };
+    sapp_set_cursor(css_name.as_ptr(), css_name.len());
+}
 
 pub unsafe fn sapp_high_dpi() -> bool {
     false
@@ -341,6 +395,15 @@ pub unsafe fn sapp_high_dpi() -> bool {
 
 pub unsafe fn sapp_dpi_scale() -> f32 {
     1.
+}
+
+#[no_mangle]
+pub extern "C" fn crate_version() -> u32 {
+    let major = env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>().unwrap();
+    let minor = env!("CARGO_PKG_VERSION_MINOR").parse::<u32>().unwrap();
+    let patch = env!("CARGO_PKG_VERSION_PATCH").parse::<u32>().unwrap();
+
+    (major << 24) + (minor << 16) + patch
 }
 
 #[no_mangle]

@@ -18,6 +18,10 @@ impl Texture {
         }
     }
 
+    pub fn gl_internal_id(&self) -> GLuint {
+        self.texture
+    }
+
     /// Delete GPU texture, leaving handle unmodified.
     ///
     /// More high-level code on top of miniquad probably is going to call this in Drop implementation of some
@@ -84,17 +88,14 @@ impl Default for TextureParams {
 }
 
 /// Sets the wrap parameter for texture.
-#[repr(u8)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TextureWrap {
     /// Samples at coord x + 1 map to coord x.
-    Repeat,
+    Repeat = GL_REPEAT as isize,
     /// Samples at coord x + 1 map to coord 1 - x.
-    Mirror,
+    Mirror = GL_MIRRORED_REPEAT as isize,
     /// Samples at coord x + 1 map to coord 1.
-    Clamp,
-    /// Same as Mirror, but only for one repetition.
-    MirrorClamp,
+    Clamp = GL_CLAMP_TO_EDGE as isize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -177,8 +178,8 @@ impl Texture {
                 },
             );
 
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE as i32);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE as i32);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, params.wrap as i32);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, params.wrap as i32);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, params.filter as i32);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, params.filter as i32);
         }
@@ -314,6 +315,39 @@ impl Texture {
         }
 
         ctx.cache.restore_texture_binding(0);
+    }
+
+    /// Read texture data into CPU memory
+    pub fn read_pixels(&self, bytes: &mut [u8]) {
+        let (_, format, pixel_type) = self.format.into();
+
+        let mut fbo = 0;
+        unsafe {
+            let mut binded_fbo: i32 = 0;
+            glGetIntegerv(gl::GL_DRAW_FRAMEBUFFER_BINDING, &mut binded_fbo);
+            glGenFramebuffers(1, &mut fbo);
+            glBindFramebuffer(gl::GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture2D(
+                gl::GL_FRAMEBUFFER,
+                gl::GL_COLOR_ATTACHMENT0,
+                gl::GL_TEXTURE_2D,
+                self.texture,
+                0,
+            );
+
+            glReadPixels(
+                0,
+                0,
+                self.width as _,
+                self.height as _,
+                format,
+                pixel_type,
+                bytes.as_mut_ptr() as _,
+            );
+
+            glBindFramebuffer(gl::GL_FRAMEBUFFER, binded_fbo as _);
+            glDeleteFramebuffers(1, &fbo);
+        }
     }
 
     #[inline]

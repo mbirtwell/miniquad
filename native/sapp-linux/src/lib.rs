@@ -1,5 +1,6 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(improper_ctypes)]
+#![allow(improper_ctypes_definitions)]
 #![allow(
     unused_variables,
     dead_code,
@@ -11,7 +12,7 @@
     unused_mut
 )]
 
-mod gl;
+pub mod gl;
 mod rand;
 mod x;
 mod x_cursor;
@@ -193,6 +194,20 @@ pub const SAPP_MODIFIER_CTRL: libc::c_uint = 1 << 1;
 pub const SAPP_MODIFIER_ALT: libc::c_uint = 1 << 2;
 pub const SAPP_MODIFIER_SUPER: libc::c_uint = 1 << 3;
 
+pub const SAPP_CURSOR_DEFAULT: u32 = 0;
+pub const SAPP_CURSOR_HELP: u32 = 1;
+pub const SAPP_CURSOR_POINTER: u32 = 2;
+pub const SAPP_CURSOR_WAIT: u32 = 3;
+pub const SAPP_CURSOR_CROSSHAIR: u32 = 4;
+pub const SAPP_CURSOR_TEXT: u32 = 5;
+pub const SAPP_CURSOR_MOVE: u32 = 6;
+pub const SAPP_CURSOR_NOTALLOWED: u32 = 7;
+pub const SAPP_CURSOR_EWRESIZE: u32 = 8;
+pub const SAPP_CURSOR_NSRESIZE: u32 = 9;
+pub const SAPP_CURSOR_NESWRESIZE: u32 = 10;
+pub const SAPP_CURSOR_NWSERESIZE: u32 = 11;
+pub const SAPP_CURSOR_NUM: usize = 12; // number of cursors
+
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct sapp_event {
@@ -284,6 +299,9 @@ pub struct _sapp_state {
 static mut _sapp_xi_extension_opcode: i32 = -1;
 
 static mut _sapp_empty_cursor: x_cursor::Cursor = 0;
+static mut _sapp_cursor_cache: [x_cursor::Cursor; SAPP_CURSOR_NUM] = [0; SAPP_CURSOR_NUM];
+static mut _sapp_cursor_icon: u32 = SAPP_CURSOR_DEFAULT;
+static mut _sapp_cursor_shown: bool = true;
 
 pub type GLXContext = *mut __GLXcontext;
 pub type PFNGLXDESTROYCONTEXTPROC =
@@ -659,10 +677,7 @@ pub unsafe extern "C" fn _sapp_glx_has_ext(
     }
     return true;
 }
-pub unsafe extern "C" fn _sapp_glx_extsupported(
-    mut ext: &[u8],
-    mut extensions: *const libc::c_char,
-) -> bool {
+pub unsafe fn _sapp_glx_extsupported(mut ext: &[u8], mut extensions: *const libc::c_char) -> bool {
     if !extensions.is_null() {
         return _sapp_glx_has_ext(ext.as_ptr() as _, extensions);
     } else {
@@ -1260,10 +1275,10 @@ unsafe fn _sapp_x11_set_fullscreen() {
     // however, this is X, so just in case - the second method
     // send ClientMessage to the window with request to change property to fullscreen
     {
-        let mut data = [0i64; 5];
+        let mut data = [0isize; 5];
 
         data[0] = 1;
-        data[1] = wm_fullscreen as i64;
+        data[1] = wm_fullscreen as isize;
         data[2] = 0;
 
         let mut ev = XClientMessageEvent {
@@ -1274,7 +1289,9 @@ unsafe fn _sapp_x11_set_fullscreen() {
             window: _sapp_x11_window,
             display: _sapp_x11_display,
             format: 32,
-            data: ClientMessageData { l: data },
+            data: ClientMessageData {
+                l: std::mem::transmute(data),
+            },
         };
         XSendEvent(
             _sapp_x11_display,
@@ -2831,13 +2848,46 @@ pub unsafe extern "C" fn sapp_set_cursor_grab(mut grab: bool) {
     XFlush(_sapp_x11_display);
 }
 
+pub unsafe extern "C" fn sapp_set_mouse_cursor(cursor_icon: u32) {
+    _sapp_cursor_icon = cursor_icon;
+    update_cursor();
+}
+
+unsafe fn update_cursor() {
+    let mut cursor;
+
+    if !_sapp_cursor_shown {
+        cursor = _sapp_empty_cursor
+    } else {
+        cursor = _sapp_cursor_cache[_sapp_cursor_icon as usize];
+
+        if cursor == 0 {
+            cursor = x_cursor::load_cursor(match _sapp_cursor_icon {
+                SAPP_CURSOR_DEFAULT => x_cursor::XC_left_ptr,
+                SAPP_CURSOR_HELP => x_cursor::XC_question_arrow,
+                SAPP_CURSOR_POINTER => x_cursor::XC_hand2,
+                SAPP_CURSOR_WAIT => x_cursor::XC_watch,
+                SAPP_CURSOR_CROSSHAIR => x_cursor::XC_crosshair,
+                SAPP_CURSOR_TEXT => x_cursor::XC_xterm,
+                SAPP_CURSOR_MOVE => x_cursor::XC_fleur,
+                SAPP_CURSOR_NOTALLOWED => x_cursor::XC_pirate,
+                SAPP_CURSOR_EWRESIZE => x_cursor::XC_sb_h_double_arrow,
+                SAPP_CURSOR_NSRESIZE => x_cursor::XC_sb_v_double_arrow,
+                SAPP_CURSOR_NESWRESIZE => x_cursor::XC_top_right_corner,
+                SAPP_CURSOR_NWSERESIZE => x_cursor::XC_top_left_corner,
+                _ => return,
+            });
+            _sapp_cursor_cache[_sapp_cursor_icon as usize] = cursor;
+        }
+    }
+
+    x_cursor::set_cursor(cursor);
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sapp_show_mouse(mut shown: bool) {
-    if shown {
-        x_cursor::set_cursor(0);
-    } else {
-        x_cursor::set_cursor(_sapp_empty_cursor);
-    }
+    _sapp_cursor_shown = shown;
+    update_cursor();
 }
 #[no_mangle]
 pub unsafe extern "C" fn sapp_keyboard_shown() -> bool {
@@ -2953,4 +3003,8 @@ pub static mut _sapp: _sapp_state = _sapp_state {
 #[no_mangle]
 pub unsafe extern "C" fn sapp_isvalid() -> bool {
     return _sapp.valid;
+}
+#[no_mangle]
+pub unsafe fn sapp_is_elapsed_timer_supported() -> bool {
+    return true;
 }
